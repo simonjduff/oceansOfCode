@@ -15,7 +15,7 @@ namespace tests
             {
                 ".....",
                 "xxxxx",
-                "x.x.x.",
+                "x.x.x",
                 ".x.x."
             };
             
