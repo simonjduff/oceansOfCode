@@ -19,7 +19,7 @@ namespace tests
                 ".x.x."
             };
 
-            Grid grid = new Grid(input);
+            Grid grid = new Grid(new GridInputToBytes(), input);
 
             // When I set the start position
             var position = new Position(2, 1);
@@ -51,7 +51,7 @@ namespace tests
                 "...x."
             };
             
-            Grid grid = new Grid(input);
+            Grid grid = new Grid(new GridInputToBytes(), input);
             CatBot bot = new CatBot(new Position(startX, startY));
 
             // When I check move validity
@@ -74,7 +74,7 @@ namespace tests
                 "....."
             };
             
-            Grid grid = new Grid(input);
+            Grid grid = new Grid(new GridInputToBytes(), input);
             
             // And a start position
             CatBot bot = new CatBot(new Position(1, 2));

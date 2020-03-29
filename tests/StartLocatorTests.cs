@@ -19,7 +19,7 @@ namespace tests
                 ".x.x."
             };
             
-            Grid grid = new Grid(input);
+            Grid grid = new Grid(new GridInputToBytes(), input);
             
             // And a start locator
             StartLocator startLocator = new StartLocator();

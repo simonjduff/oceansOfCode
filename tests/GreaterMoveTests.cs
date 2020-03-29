@@ -3,7 +3,7 @@ using Xunit;
 
 namespace tests
 {
-    public class GreatedMoveTests
+    public class GreaterMoveTests
     {
         [Theory]
         [InlineData(1,2, MoveDirection.South)]
@@ -24,7 +24,7 @@ namespace tests
                 "....."
             };
             
-            Grid grid = new Grid(input);
+            Grid grid = new Grid(new GridInputToBytes(), input);
             
             // And a bot
             CatBot bot = new CatBot(new Position(x, y));

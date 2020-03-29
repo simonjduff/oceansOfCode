@@ -1,4 +1,6 @@
-﻿using System.Text;
+﻿using System.Diagnostics;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Types
 {
@@ -12,6 +14,8 @@ namespace Types
      **/
     class Player
     {
+        private static Regex _moveRegex = new Regex("MOVE (?<move>[NSEW])", RegexOptions.Compiled);
+        
         static void Main(string[] args)
         {
             string[] inputs;
@@ -27,7 +31,7 @@ namespace Types
                 gridInput[i] = Console.ReadLine();
             }
             
-            Grid grid = new Grid(gridInput);
+            Grid grid = new Grid(new GridInputToBytes(), gridInput);
             
             StartLocator startLocator = new StartLocator();
             var startLocation = startLocator.FindLocation(grid);
@@ -42,9 +46,14 @@ namespace Types
             Random random = new Random();
             // var moveStrategy = new RandomMoveStrategy(random);
             var moveStrategy = new GreatestOptionsMoveStrategy(6);
+            var torpedoStrategy = new TorpedoStrategy(random, grid, catBot);
+            var locatorStrategy = new BasicEnemyLocatorStrategy(grid);
+            List<Direction> enemyMoves = new List<Direction>();
             // game loop
+            int turnNumber = 0;
             while (true)
             {
+                turnNumber++;
                 inputs = Console.ReadLine().Split(' ');
                 int x = int.Parse(inputs[0]);
                 int y = int.Parse(inputs[1]);
@@ -57,13 +66,38 @@ namespace Types
                 string sonarResult = Console.ReadLine();
                 string opponentOrders = Console.ReadLine();
 
+                var moveMatch = _moveRegex.Match(opponentOrders);
+                if (moveMatch.Success)
+                {
+                    enemyMoves.Add((Direction)moveMatch.Groups["move"].Value[0]);
+                }
+                Console.Error.WriteLine($"Spotted moves: {string.Join(" ", enemyMoves)}");
+
                 // Write an action using Console.WriteLine()
                 // To debug: Console.Error.WriteLine("Debug messages...");s
 
+                var timer = new Stopwatch();
+                timer.Start();
+                locatorStrategy.LocateEnemy(enemyMoves.ToArray());
+                
+                timer.Stop();
+                Console.Error.WriteLine($"Enemy locator took {timer.ElapsedMilliseconds}ms");
+                
                 var move = moveStrategy.GetMove(grid, catBot);
                 catBot.Move(grid, move);
+                string torpedo;
+                if (turnNumber % 4 != 0)
+                {
+                    torpedo = " TORPEDO";
+                }
+                else
+                {
+                    var target = torpedoStrategy.GetTarget();
+                    torpedo = $"|TORPEDO {target.X} {target.Y}";
+                }
 
-                Console.WriteLine(move.ToMove());
+                Console.Error.WriteLine($"Torpedo is {torpedo}");
+                Console.WriteLine($"{move.ToMove()}{torpedo}");
             }
         }
     }
@@ -154,9 +188,157 @@ namespace Types
         }
     }
 
+    public class BasicEnemyLocatorStrategy
+    {
+        private readonly Grid _grid;
+
+        public BasicEnemyLocatorStrategy(Grid grid)
+        {
+            _grid = grid;
+        }
+
+        public IEnumerable<Position> LocateEnemy(IEnumerable<Direction> moves)
+        {
+            int northCount = 0;
+            int southCount = 0;
+            int westCount = 0;
+            int eastCount = 0;
+            foreach (var move in moves)
+            {
+                switch (move)
+                {
+                    case Direction.East:
+                        eastCount++;
+                        break;
+                    case Direction.North:
+                        northCount++;
+                        break;
+                    case Direction.South:
+                        southCount++;
+                        break;
+                    case Direction.West:
+                        westCount++;
+                        break;
+                }
+            }
+
+            var positions = FindPositions(moves, westCount, northCount);
+            uint[] myGrid = new uint[_grid.GridBinary.Length];
+            foreach (var position in positions)
+            {
+                myGrid[position.Y] = myGrid[position.Y] | (uint) Math.Pow(2, _grid.Width - 1 - position.X);
+            }
+
+
+            uint[] gridShape = new uint[_grid.GridBinary.Length];
+            _grid.GridBinary.CopyTo(gridShape, 0);
+
+            uint mask = ~(uint)Enumerable.Range(0, _grid.Width).Sum(i => (uint) Math.Pow(2, i));
+
+            for (int i = 0; i < gridShape.Length; i++)
+            {
+                gridShape[i] = gridShape[i] | mask;
+            }
+
+            List<Position> offsetMatches = new List<Position>();
+
+            Position offset = new Position(0,0);
+            uint[] search = new uint[myGrid.Length];
+            myGrid.CopyTo(search, 0);
+            do
+            {
+                StringBuilder sb = new StringBuilder();
+                foreach (var row in search)
+                {
+                    sb.AppendLine(Convert.ToString(row, 2).PadLeft(5, '0'));
+                }
+
+                string result = sb.ToString();
+
+                bool fail = false;
+                for (int row = 0; row < gridShape.Length; row++)
+                {
+                    if ((gridShape[row] & search[row]) != 0)
+                    {
+                        fail = true;
+                        break;
+                    }
+                }
+                
+                if (!fail)
+                {
+                    offsetMatches.Add(offset);
+                    // Console.Error.WriteLine($"Found a place the enemy could be hiding offset {offset}");
+                }
+                
+                if (search.Any(row => (row & 1) != 0) && (search[search.Length - 1] & ~(uint) 0) != 0)
+                {
+                    break;
+                }
+
+                if (search.All(row => (row & 1) == 0))
+                {
+                    for (int i = 0; i < search.Length; i++)
+                    {
+                        search[i] = search[i] >> 1;
+                    }
+                    offset = new Position(offset.X + 1, offset.Y);
+                    continue;
+                }
+
+                
+                uint temp = myGrid[myGrid.Length - 1];
+                for (int i = myGrid.Length - 1; i > 0; i--)
+                {
+                    myGrid[i] = myGrid[i - 1];
+                }
+                myGrid[0] = temp;
+                myGrid.CopyTo(search, 0);
+                offset = new Position(0, offset.Y + 1);
+
+            } while (true);
+
+            Position lastPosition = positions[positions.Count - 1];
+            return offsetMatches.Select(m => new Position(m.X + lastPosition.X, m.Y + lastPosition.Y));
+        }
+
+        private List<Position> FindPositions(IEnumerable<Direction> moves, int westCount, int northCount)
+        {
+            List<Position> positions = new List<Position>();
+            Position currentPosition = new Position(westCount, northCount);
+            positions.Add(currentPosition);
+            foreach (var move in moves)
+            {
+                Position newPosition;
+                switch (move)
+                {
+                    case Direction.East:
+                        newPosition = new Position(currentPosition.X + 1, currentPosition.Y);
+                        break;
+                    case Direction.North:
+                        newPosition = new Position(currentPosition.X, currentPosition.Y - 1);
+                        break;
+                    case Direction.South:
+                        newPosition = new Position(currentPosition.X, currentPosition.Y + 1);
+                        break;
+                    case Direction.West:
+                        newPosition = new Position(currentPosition.X - 1, currentPosition.Y);
+                        break;
+                    default:
+                        throw new InvalidOperationException($"Invalid move {move}");
+                }
+
+                positions.Add(newPosition);
+                currentPosition = newPosition;
+            }
+
+            return positions;
+        }
+    }
+
     public class GreatestOptionsMoveStrategy : IMoveStrategy
     {
-        private int _searchDepth;
+        private readonly int _searchDepth;
 
         public GreatestOptionsMoveStrategy(int searchDepth)
         {
@@ -298,38 +480,36 @@ namespace Types
 
     public class Grid
     {
-        private readonly GridContent[] _contents;
+        public uint[] GridBinary { get; }
         public int Width { get; }
         public int Height { get; }
+        
+        public int CellCount { get; }
 
-       public Grid(string[] input)
+       public Grid(GridInputToBytes gridInputToBytes, string[] input)
         {
             if (input.GroupBy(i => i.Length).Count() > 1)
             {
                 throw new ArgumentException("Input is not of equal lengths");
             }
+
+            GridBinary = gridInputToBytes.GetInt64(input);
             
-            _contents = input.SelectMany(i => i.Select(c =>
-                {
-                    switch (c)
-                    {
-                        case '.': return GridContent.Empty;
-                        case 'x': return GridContent.Island;
-                        default:
-                            throw new Exception($"Unknown input {c}");
-                    }
-                }) 
-            ).ToArray();
             Width = input[0].Length;
             Height = input.Length;
+            CellCount = Width * Height;
         }
 
         public GridContent ContentsAt(Position position)
         {
-            return _contents[PositionToIndex(position)];
-        }
+            int reversedIndex = Width - 1 - position.X;
+            uint mask = (uint) Math.Pow(2, reversedIndex);
 
-        private int PositionToIndex(Position position) => position.Y * Width + position.X;
+            var row = GridBinary[position.Y];
+
+            uint result = mask & row;
+            return result == 0 ? GridContent.Empty : GridContent.Island;
+        }
 
         public bool IsPositionInBounds(Position position)
         => position.X >= 0 && position.Y >= 0
@@ -372,6 +552,9 @@ namespace Types
                 }
             }
         }
+
+        public int DistanceBetween(Position first, Position second)
+            => Math.Abs(first.X - second.X) + Math.Abs(first.Y - second.Y);
     }
 
     public enum Direction
@@ -446,5 +629,97 @@ namespace Types
 
         public override string ToString()
             => $"({X},{Y})";
+    }
+
+    public class TorpedoStrategy
+    {
+        private readonly Grid _grid;
+        private CatBot _bot;
+        private Random _random;
+        private const int Range = 4;
+        private const int Safety = 2;
+
+        public TorpedoStrategy(Random random,
+            Grid grid,
+            CatBot bot)
+        {
+            _random = random;
+            _bot = bot;
+            _grid = grid;
+        }
+
+        public Position GetTarget()
+        {
+            Position target;
+            do
+            {
+                target = new Position(_random.Next(-1 * Range, Range + 1) + _bot.Position.X,
+                    _random.Next(-1 * Range, Range + 1) + _bot.Position.Y);
+                Console.Error.WriteLine($"Generated target {target}");
+            } while (!IsValidTarget(target));
+
+            return target;
+        }
+
+        private bool IsValidTarget(Position target)
+        {
+            if (!_grid.IsPositionInBounds(target))
+            {
+                return false;
+            }
+            
+            int distance = _grid.DistanceBetween(_bot.Position, target);
+            return _grid.ContentsAt(target) == GridContent.Empty
+                && distance <= Range
+                   && distance >= Safety;
+        }
+    }
+    
+    public class GridInputToBytes
+    {
+        public uint[] GetInt64(string[] input)
+        {
+            uint[] result = new uint[input.Length];
+
+            for (int row = 0; row < input.Length; row++)
+            {
+                char[] reversed = input[row].Reverse().ToArray();
+                uint total = 0;
+                for (int i = 0; i < reversed.Length; i++)
+                {
+                    if (reversed[i] == 'x')
+                    {
+                        total += (uint)Math.Pow(2, i);
+                    }
+                }
+
+                result[row] = total;
+            }
+
+            return result;
+        }
+    }
+    
+    public class GridBitRotator
+    {
+        private readonly uint _leftMostBitInt;
+
+        public GridBitRotator(in int bitCount)
+        {
+            _leftMostBitInt = (uint)Math.Pow(2, bitCount - 1);
+        }
+
+        public uint[] Rotate(uint[] ints)
+        {
+            uint[] result = new uint[ints.Length];
+            for (int i = 0; i < ints.Length; i++)
+            {
+                int leftIndex = i == 0 ? ints.Length - 1 : i - 1;
+                uint incomingIfRequired = (ints[leftIndex] & 1) * _leftMostBitInt;
+                result[i] = (ints[i] >> 1) | incomingIfRequired;
+            }
+
+            return result;
+        }
     }
 }
