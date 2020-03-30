@@ -42,9 +42,76 @@ namespace tests
         }
 
         [Fact]
-        public void Can_find_enemy_by_torpedo_targets()
+        public void Fix_crash_bug()
         {
+            // Given a grid
+            var input = new string[]
+            {
+                "..xxxxx.xx..xxx",
+                "..xxxx..xx..xx.",
+                "..xxxxx........",
+                "..xxxxx..xx....",
+                ".........xx....",
+                ".......xx......",
+                ".......xx......",
+                "...xx..........",
+                "...xx..........",
+                "...............",
+                "...............",
+                "...............",
+                ".........xx....",
+                ".........xx....",
+                "..............."
+            };
             
+            Grid grid = new Grid(new GridInputToBytes(), input);
+            
+            // And an enemy move list    
+            var moves = Enumerable.Range(0, 100).SelectMany(i => new[] {Direction.North, Direction.South});
+            
+            // When I find the enemy
+            var locator = new BasicEnemyLocatorStrategy(grid);
+            IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
+        }
+
+        [Fact]
+        public void Zero_possibilities_bug()
+        {
+            // Given a grid
+            var input = new string[]
+            {
+                "...............",
+                "...............",
+                "...............",
+                ".........xx...x",
+                ".........xx...x",
+                ".........xxx...",
+                ".......xxxxx...",
+                ".xx....xxxxx...",
+                ".xx....xxxxx...",
+                "...............",
+                "......xx...xxx.",
+                "......xx...xxxx",
+                "...........xxxx",
+                "............xx.",
+                "............xx."
+            };
+            
+            Grid grid = new Grid(new GridInputToBytes(), input);
+
+            var moves = new[]
+            {
+                'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 
+                'N', 'E', 'E', 'E', 'S', 'W', 'S', 'S', 'E', 'E', 'S', 
+                'W', 'W', 'S', 'E', 'E', 'S', 'E', 'S', 'S', 'N', 'E', 
+                'N', 'N', 'E', 'N', 'W', 'N', 'E', 'E', 'E'
+            }.Select(m => (Direction)m);
+            
+            var locator = new BasicEnemyLocatorStrategy(grid);
+            IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
+            
+            // Then there is more than one possibility
+            Assert.NotEmpty(possibleLocations);
         }
     }
 }
