@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Types;
 using Xunit;
 
@@ -13,11 +14,21 @@ namespace tests
             // Given a grid
             var input = new string[]
             {
-                ".....",
-                "xxxxx",
-                "x.x.x",
-                "...x.",
-                "....."
+                ".....xxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "x.x.xxxxxxxxxxx",
+                "...x.xxxxxxxxxx",
+                ".....xxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
+                "xxxxxxxxxxxxxxx",
             };
             
             Grid grid = new Grid(new GridInputToBytes(), input);
@@ -34,7 +45,7 @@ namespace tests
             
             // When I find the enemy
             var locator = new BasicEnemyLocatorStrategy(grid);
-            IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves.Select(m => new EnemyMove(m)));
+            IEnumerable<Position> possibleLocations = locator.LocateEnemy(new CancellationToken(),  moves.Select(m => new EnemyMove(m)));
             
             // Then the location is correct
             Assert.Single(possibleLocations);
@@ -73,46 +84,46 @@ namespace tests
             
             // When I find the enemy
             var locator = new BasicEnemyLocatorStrategy(grid);
-            IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
+            IEnumerable<Position> possibleLocations = locator.LocateEnemy(new CancellationToken(),  moves);
         }
 
-        // [Fact]
-        // public void Sector_matching()
-        // {
-        //     // Given a grid
-        //     var input = new string[]
-        //     {
-        //         "...............",
-        //         "...............",
-        //         "...............",
-        //         ".........xx...x",
-        //         ".........xx...x",
-        //         ".........xxx...",
-        //         ".......xxxxx...",
-        //         ".xx....xxxxx...",
-        //         ".xx....xxxxx...",
-        //         "...............",
-        //         "......xx...xxx.",
-        //         "......xx...xxxx",
-        //         "...........xxxx",
-        //         "............xx.",
-        //         "............xx."
-        //     };
-        //     
-        //     Grid grid = new Grid(new GridInputToBytes(), input);
-        //
-        //     var moves = new[]
-        //     {
-        //         "MOVE S", "MOVE S", "SURFACE 3 | MOVE S", "MOVE S",
-        //         "MOVE W","MOVE W", "MOVE W",  
-        //     }.Select(m => new EnemyMove(m));
-        //     
-        //     var locator = new SectorAwareEnemyLocatorStrategy(grid);
-        //     IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
-        //     
-        //     // Then there is one possibility
-        //     Assert.Single(possibleLocations);
-        //         Assert.Equal(new Position(11, 4), possibleLocations.Single());
-        // }
+        [Theory]
+        [InlineData(10, 4, "MOVE S", "MOVE S", "SURFACE 3 | MOVE S", "MOVE S",
+            "MOVE W","MOVE W", "MOVE W")]
+        [InlineData(10, 4, "MOVE S", "MOVE S", "MOVE S | SURFACE 3", "MOVE S",
+            "MOVE W","MOVE W", "MOVE W")]
+        public void Sector_matching(int x, int y, params string[] input)
+        {
+            // Given a grid
+            var gridInput = new string[]
+            {
+                "...............",
+                "...............",
+                "...............",
+                ".........xx...x",
+                ".........x....x",
+                ".........xxx...",
+                ".......xxxxx...",
+                ".xx....xxxxx...",
+                ".xx....xxxxx...",
+                "...............",
+                "......xx...xxx.",
+                "......xx...xxxx",
+                "...........xxxx",
+                "............xx.",
+                "............xx."
+            };
+            
+            Grid grid = new Grid(new GridInputToBytes(), gridInput);
+        
+            var moves = input.Select(m => new EnemyMove(m));
+            
+            var locator = new BasicEnemyLocatorStrategy(grid);
+            IEnumerable<Position> possibleLocations = locator.LocateEnemy(new CancellationToken(),  moves);
+            
+            // Then there is one possibility
+            Assert.Single(possibleLocations);
+            Assert.Equal(new Position(x, y), possibleLocations.Single());
+        }
     }
 }

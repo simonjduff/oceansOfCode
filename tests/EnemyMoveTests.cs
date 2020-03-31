@@ -33,7 +33,7 @@ namespace tests
             EnemyMove move = new EnemyMove(input);
 
             Assert.True(move.HasSector);
-            Assert.Equal(expected, move.Sector.Number);
+            Assert.Equal(expected, move.Sector.Value.Number);
         }
 
         [Theory]

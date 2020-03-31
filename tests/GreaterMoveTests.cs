@@ -1,4 +1,5 @@
-﻿using Types;
+﻿using System.Threading;
+using Types;
 using Xunit;
 
 namespace tests
@@ -31,7 +32,7 @@ namespace tests
             
             // When I get the best move
             GreatestOptionsMoveStrategy moveStrategy = new GreatestOptionsMoveStrategy(5);
-            var move = moveStrategy.GetMove(grid, bot);
+            var move = moveStrategy.GetMove(grid, bot, new CancellationToken());
             
             // Then the move is correct
             Assert.Equal(expected, move);

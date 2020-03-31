@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace Types
 {
@@ -11,12 +12,18 @@ namespace Types
      * Auto-generated code below aims at helping you parse
      * the standard input according to the problem statement.
      **/
+  
     class Player
     {
-        private static Regex _moveRegex = new Regex("MOVE (?<move>[NSEW])", RegexOptions.Compiled);
-        private static Regex _silenceRegex = new Regex(@"SILENCE", RegexOptions.Compiled);
-        private static Regex _sectorLocator = new Regex(@"(SONAR|SURFACE) (?<sector>\d+)");
-
+        public static readonly Regex MoveRegex = new Regex("MOVE (?<move>[NSEW])", RegexOptions.Compiled);
+        public static readonly Regex SectorRegex = new Regex(@"(SONAR|SURFACE) (?<sector>\d)", RegexOptions.Compiled);
+        public static readonly Regex SilenceRegex = new Regex(@"SILENCE", RegexOptions.Compiled);
+        public static uint LeftColumnMask =   0b_00000_11111_11111;
+        public static uint MiddleColumnMask = 0b_11111_00000_11111;
+        public static uint RightColumnMask =  0b_11111_11111_00000;
+        public static uint UnusedBitsMask = ~(uint) Enumerable.Range(0, 15).Sum(i => (uint) Math.Pow(2, i));
+        public static Random Random = new Random();
+        
         static void Main(string[] args)
         {
             string[] inputs;
@@ -43,75 +50,92 @@ namespace Types
             // To debug: Console.Error.WriteLine("Debug messages...");
 
             Console.WriteLine($"{startLocation.X} {startLocation.Y}");
-
-            Random random = new Random();
+            
             // var moveStrategy = new RandomMoveStrategy(random);
             var moveStrategy = new GreatestOptionsMoveStrategy(6);
-            var torpedoStrategy = new TorpedoStrategy(random, grid, catBot);
-            var knownLocationTargettingStrategy = new KnownLocationsTorpedoStrategy(grid, random);
+            var torpedoStrategy = new TorpedoStrategy(Random, grid, catBot);
+            var knownLocationTargettingStrategy = new KnownLocationsTorpedoStrategy(grid, Random);
             var locatorStrategy = new BasicEnemyLocatorStrategy(grid);
             List<EnemyMove> enemyMoves = new List<EnemyMove>();
             // game loop
             int turnNumber = 0;
             while (true)
             {
-                turnNumber++;
-                inputs = Console.ReadLine().Split(' ');
-                int x = int.Parse(inputs[0]);
-                int y = int.Parse(inputs[1]);
-                int myLife = int.Parse(inputs[2]);
-                int oppLife = int.Parse(inputs[3]);
-                int torpedoCooldown = int.Parse(inputs[4]);
-                int sonarCooldown = int.Parse(inputs[5]);
-                int silenceCooldown = int.Parse(inputs[6]);
-                int mineCooldown = int.Parse(inputs[7]);
-                string sonarResult = Console.ReadLine();
-                string opponentOrders = Console.ReadLine();
+                Stopwatch globalTimer = new Stopwatch();
 
-                var currentMove = new EnemyMove(opponentOrders);
-                enemyMoves.Add(currentMove);
+                try
+                {
+                    turnNumber++;
+                    inputs = Console.ReadLine().Split(' ');
+                    globalTimer.Start();
+                    int x = int.Parse(inputs[0]);
+                    int y = int.Parse(inputs[1]);
+                    int myLife = int.Parse(inputs[2]);
+                    int oppLife = int.Parse(inputs[3]);
+                    int torpedoCooldown = int.Parse(inputs[4]);
+                    int sonarCooldown = int.Parse(inputs[5]);
+                    int silenceCooldown = int.Parse(inputs[6]);
+                    int mineCooldown = int.Parse(inputs[7]);
+                    Console.Error.WriteLine($"Reading data {globalTimer.ElapsedMilliseconds}");
+                    string sonarResult = Console.ReadLine();
+                    string opponentOrders = Console.ReadLine();
+
+                    Console.Error.WriteLine($"Starting turn at {globalTimer.ElapsedMilliseconds}");
+                    
+                    var currentMove = new EnemyMove(opponentOrders);
+                    Console.Error.WriteLine($"Parsed move at {globalTimer.ElapsedMilliseconds}");
+                    enemyMoves.Add(currentMove);
+                    if (currentMove.IsSilence)
+                    {
+                        Console.Error.WriteLine($"SILENCED {opponentOrders}");
+                        enemyMoves.Clear();
+                    }
                 
-                if (currentMove.IsSilence)
-                {
-                    Console.Error.WriteLine($"SILENCED {opponentOrders}");
-                    enemyMoves.Clear();
-                }
-                
-                Console.Error.WriteLine($"Spotted moves: {string.Join(" ", enemyMoves.Where(m => m.IsMovement).Select(e => (char)e.Movement))}");
+                    Console.Error.WriteLine($"Spotted moves: {string.Join(" ", enemyMoves.Where(m => m.IsMovement).Select(e => (char)e.Movement))} at {globalTimer.ElapsedMilliseconds}");
 
-                if (currentMove.HasSector)
-                {
-                    Console.Error.WriteLine($"Enemy in sector {currentMove.Sector}");
-                }
+                    if (currentMove.HasSector)
+                    {
+                        Console.Error.WriteLine($"Enemy in sector {currentMove.Sector}");
+                    }
 
-                // Write an action using Console.WriteLine()
-                // To debug: Console.Error.WriteLine("Debug messages...");s
+                    // Write an action using Console.WriteLine()
+                    // To debug: Console.Error.WriteLine("Debug messages...");s
 
-                var timer = new Stopwatch();
-                timer.Start();
-                var enemyLocations = locatorStrategy.LocateEnemy(enemyMoves.ToArray());
-                timer.Stop();
-                Console.Error.WriteLine($"Enemy locator took {timer.ElapsedMilliseconds}ms with {enemyLocations.Count()} possibilities");
-                if (enemyLocations.Count() == 1)
-                {
-                    Console.Error.WriteLine($"ENEMY LOCATED AT {enemyLocations.Single()}");
-                }
-                
-                var move = moveStrategy.GetMove(grid, catBot);
-                catBot.Move(grid, move);
-                string torpedo;
-                if (turnNumber % 4 != 0)
-                {
-                    torpedo = " TORPEDO";
-                }
-                else
-                {
-                    var target = knownLocationTargettingStrategy.GetTarget(catBot.Position, enemyLocations) ?? torpedoStrategy.GetTarget();
-                    torpedo = $"|TORPEDO {target.X} {target.Y}";
-                }
+                    var timer = new Stopwatch();
+                    timer.Start();
+                    CancellationTokenSource locationCancellation = new CancellationTokenSource(10);
+                    var enemyLocations = locatorStrategy.LocateEnemy(locationCancellation.Token, enemyMoves.ToArray());
+                    timer.Stop();
+                    Console.Error.WriteLine($"Enemy locator took {timer.ElapsedMilliseconds}ms with {enemyLocations.Count()} possibilities at {globalTimer.ElapsedMilliseconds}");
+                    if (enemyLocations.Count() == 1)
+                    {
+                        Console.Error.WriteLine($"ENEMY LOCATED AT {enemyLocations.Single()}");
+                    }
 
-                // Console.Error.WriteLine($"Torpedo is {torpedo}");
-                Console.WriteLine($"{move.ToMove()}{torpedo}");
+                    CancellationTokenSource cancellation = new CancellationTokenSource(5);
+                    Console.Error.WriteLine($"Starting movement at {globalTimer.ElapsedMilliseconds}");
+                    var move = moveStrategy.GetMove(grid, catBot, cancellation.Token);
+                    Console.Error.WriteLine($"Finishing movement at {globalTimer.ElapsedMilliseconds}");
+                    catBot.Move(grid, move);
+                    string torpedo;
+                    if (turnNumber % 4 != 0)
+                    {
+                        torpedo = " TORPEDO";
+                    }
+                    else
+                    {
+                        var target = knownLocationTargettingStrategy.GetTarget(catBot.Position, enemyLocations) ??
+                                     torpedoStrategy.GetTarget();
+                        torpedo = $"|TORPEDO {target.X} {target.Y}";
+                    }
+
+                    // Console.Error.WriteLine($"Torpedo is {torpedo}");
+                    Console.WriteLine($"{move.ToMove()}{torpedo}");
+                }
+                finally
+                {
+                    Console.Error.WriteLine($"TIMER {globalTimer.ElapsedMilliseconds}");
+                }
             }
         }
     }
@@ -138,7 +162,7 @@ namespace Types
 
     public interface IMoveStrategy
     {
-        MoveDirection GetMove(Grid grid, CatBot bot);
+        MoveDirection GetMove(Grid grid, CatBot bot, CancellationToken cancellation);
     }
     
     public class CatBot : Token
@@ -209,16 +233,18 @@ namespace Types
         public Position CurrentOffset { get; private set; }
         public bool CanMoveDown => (_offsetGrid[_offsetGrid.Length - 1] & ~(uint) 0) == 0;
         public bool CanMoveRight => _offsetGrid.All(row => (row & 1) == 0);
+        public string OffsetString => string.Join("\n", _offsetGrid.Select(m => Convert.ToString(m, 2)));
 
-        public OverlayGrid(int width, int height, List<Position> positions)
+        public OverlayGrid(int width, int height, List<SectorConstrainedPosition> positions)
         {
             _overlayGrid = GenerateGridBinary(width, height, positions);
             _offsetGrid = new uint[_overlayGrid.Length];
             _overlayGrid.CopyTo(_offsetGrid, 0);
             CurrentOffset = new Position(0,0);
         }
+        
 
-        private uint[] GenerateGridBinary(int width, int height, List<Position> positions)
+        private uint[] GenerateGridBinary(int width, int height, List<SectorConstrainedPosition> positions)
         {
             uint[] myGrid = new uint[height];
             foreach (var position in positions)
@@ -241,9 +267,9 @@ namespace Types
             return myGrid;
         }
 
-        public uint[] Mask(Grid grid)
+        public uint[] Mask(uint[] grid)
         {
-            if (grid.GridBinary.Length != _offsetGrid.Length)
+            if (grid.Length != _offsetGrid.Length)
             {
                 throw new Exception("Grids are of different sizes");
             }
@@ -251,7 +277,7 @@ namespace Types
             uint[] masked = new uint[_offsetGrid.Length];
             for (int i=0;i<_offsetGrid.Length;i++)
             {
-                masked[i] = grid.GridBinary[i] & _offsetGrid[i];
+                masked[i] = grid[i] & _offsetGrid[i];
             }
 
             return masked;
@@ -288,6 +314,25 @@ namespace Types
             _offsetGrid[0] = temp;
         }
     }
+    
+    public struct SectorConstrainedPosition
+    {
+        public SectorConstrainedPosition(Position position, Sector? sector) : this(position.X, position.Y, sector)
+        {
+        }
+
+        public SectorConstrainedPosition(int x, int y, Sector? sector)
+        {
+            X = x;
+            Y = y;
+            SectorConstraint = sector;
+        }
+            
+        public int X { get; }
+        public int Y { get; }
+        public bool IsSectorConstrained => SectorConstraint.HasValue;
+        public Sector? SectorConstraint { get; }
+    }
 
     public class BasicEnemyLocatorStrategy
     {
@@ -298,49 +343,36 @@ namespace Types
             _grid = grid;
         }
 
-        private (int N, int S, int E, int W) GetMoveCounts(IEnumerable<Direction> moves)
+        public IEnumerable<Position> LocateEnemy(CancellationToken cancellation, IEnumerable<EnemyMove> moves)
         {
-            int northCount = 0;
-            int southCount = 0;
-            int westCount = 0;
-            int eastCount = 0;
-            foreach (var move in moves)
+            if (moves.Count() < 3)
             {
-                switch (move)
-                {
-                    case Direction.East:
-                        eastCount++;
-                        break;
-                    case Direction.North:
-                        northCount++;
-                        break;
-                    case Direction.South:
-                        southCount++;
-                        break;
-                    case Direction.West:
-                        westCount++;
-                        break;
-                }
+                return Enumerable.Empty<Position>();
             }
-
-            return (northCount, southCount, eastCount, westCount);
-        }
-
-        public IEnumerable<Position> LocateEnemy(IEnumerable<EnemyMove> moves)
-        {
-            var directions = moves
-                .Where(m => m.IsMovement)
-                .Select(m => m.Movement);
-            var positions = FindPositions(directions);
+            
+            var positions = FindPositions(moves);
             var search = new OverlayGrid(_grid.Width, _grid.Height, positions);
-
+            Dictionary<Sector, OverlayGrid> sectorGrids =
+                positions.Where(p => p.IsSectorConstrained)
+                    .GroupBy(p => p.SectorConstraint.Value)
+                    .ToDictionary(p => p.Key,
+                        g => new OverlayGrid(_grid.Width, _grid.Height, g.ToList()));
+            
+            
             List<Position> offsetMatches = new List<Position>();
 
             do
             {
-                var mask = search.Mask(_grid);
+                if (cancellation.IsCancellationRequested)
+                {
+                    Console.Error.WriteLine("CANCELLING TARGETTING");
+                    break;
+                }
+                
+                var mask = search.Mask(_grid.GridBinary);
 
-                if (mask.All(m => m == 0))
+                if (PathDoesNotIntersectWithIslands(mask)
+                    && NoSectorCollisions(sectorGrids))
                 {
                     offsetMatches.Add(search.CurrentOffset);
                     // Console.Error.WriteLine($"Found a place the enemy could be hiding offset {offset}");
@@ -354,47 +386,94 @@ namespace Types
                 if (search.CanMoveRight)
                 {
                     search.ShiftRight();
+                    foreach (var sectorGrid in sectorGrids.Values)
+                    {
+                        sectorGrid.ShiftRight();
+                    }
                     continue;
                 }
 
                 search.ShiftToOriginalX();
                 search.ShiftDown();
+                foreach (var sectorGrid in sectorGrids.Values)
+                {
+                    sectorGrid.ShiftToOriginalX();
+                    sectorGrid.ShiftDown();
+                }
 
             } while (true);
 
-            Position lastPosition = positions[positions.Count - 1];
+            SectorConstrainedPosition lastPosition = positions[positions.Count - 1];
             return offsetMatches.Select(m => new Position(m.X + lastPosition.X, m.Y + lastPosition.Y));
         }
 
-        private List<Position> FindPositions(IEnumerable<Direction> moves)
+        private bool NoSectorCollisions(Dictionary<Sector, OverlayGrid> sectorGrids)
         {
-            var counts = GetMoveCounts(moves);
-            List<Position> positions = new List<Position>();
-            Position currentPosition = new Position(0, 0);
+            foreach (var sector in sectorGrids.Keys)
+            {
+                var mask = SectorMasks.MaskForSector(sector);
+                string maskString = string.Join("\n", mask.Select(m => Convert.ToString(m, 2)));
+                string sectorString = sectorGrids[sector].OffsetString;
+                if (sectorGrids[sector].Mask(mask).Any(m => m != 0))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool PathDoesNotIntersectWithIslands(uint[] mask)
+        {
+            return mask.All(m => m == 0);
+        }
+
+        private List<SectorConstrainedPosition> FindPositions(IEnumerable<EnemyMove> moves)
+        {
+            List<SectorConstrainedPosition> positions = new List<SectorConstrainedPosition>();
+            SectorConstrainedPosition currentPosition = new SectorConstrainedPosition(0, 0, null);
             positions.Add(currentPosition);
             foreach (var move in moves)
             {
-                Position newPosition;
-                switch (move)
+                if (!move.IsMovement && move.HasSector)
                 {
-                    case Direction.East:
-                        newPosition = new Position(currentPosition.X + 1, currentPosition.Y);
-                        break;
-                    case Direction.North:
-                        newPosition = new Position(currentPosition.X, currentPosition.Y - 1);
-                        break;
-                    case Direction.South:
-                        newPosition = new Position(currentPosition.X, currentPosition.Y + 1);
-                        break;
-                    case Direction.West:
-                        newPosition = new Position(currentPosition.X - 1, currentPosition.Y);
-                        break;
-                    default:
-                        throw new InvalidOperationException($"Invalid move {move}");
+                    currentPosition = new SectorConstrainedPosition(currentPosition.X, currentPosition.Y, move.Sector);
+                    positions[positions.Count - 1] = currentPosition;
+                    continue;
                 }
+                SectorConstrainedPosition newPosition;
 
-                positions.Add(newPosition);
-                currentPosition = newPosition;
+                if (move.IsMovement)
+                {
+                    switch (move.Movement)
+                    {
+                        case Direction.East:
+                            newPosition = new SectorConstrainedPosition(currentPosition.X + 1,
+                                currentPosition.Y,
+                                move.Sector);
+                            break;
+                        case Direction.North:
+                            newPosition = new SectorConstrainedPosition(currentPosition.X,
+                                currentPosition.Y - 1,
+                                move.Sector);
+                            break;
+                        case Direction.South:
+                            newPosition = new SectorConstrainedPosition(currentPosition.X,
+                                currentPosition.Y + 1,
+                                move.Sector);
+                            break;
+                        case Direction.West:
+                            newPosition = new SectorConstrainedPosition(currentPosition.X - 1,
+                                currentPosition.Y,
+                                move.Sector);
+                            break;
+                        default:
+                            throw new InvalidOperationException($"Invalid move {move}");
+                    }
+                    
+                    positions.Add(newPosition);
+                    currentPosition = newPosition;
+                }
             }
 
             int xMin = positions.Min(p => p.X);
@@ -403,7 +482,8 @@ namespace Types
             int xOffset = xMin < 0 ? Math.Abs(xMin) : 0;
             int yOffset = yMin < 0 ? Math.Abs(yMin) : 0;
             
-            return positions.Select(p => new Position(p.X + xOffset, p.Y + yOffset)).ToList();
+            return positions.Select(p => 
+                new SectorConstrainedPosition(p.X + xOffset, p.Y + yOffset, p.SectorConstraint)).ToList();
         }
     }
 
@@ -416,9 +496,9 @@ namespace Types
             _searchDepth = searchDepth;
         }
         
-        public MoveDirection GetMove(Grid grid, CatBot bot)
+        public MoveDirection GetMove(Grid grid, CatBot bot, CancellationToken cancellation)
         {
-            TreeNode root = new TreeNode(grid, bot, _searchDepth);
+            TreeNode root = new TreeNode(grid, bot, _searchDepth, cancellation);
             var result = root.Traverse(new[] {bot.Position}, null);
             return result.Direction;
         }
@@ -428,12 +508,14 @@ namespace Types
             private int _depth;
             private readonly Grid _grid;
             private CatBot _bot;
-            private static readonly Random Random = new Random();
+            private CancellationToken _cancellation;
 
             public TreeNode(Grid grid,
                 CatBot bot,
-                int maxDepth)
+                int maxDepth,
+                CancellationToken cancellation)
             {
+                _cancellation = cancellation;
                 _bot = bot;
                 _grid = grid;
                 _depth = maxDepth;
@@ -441,6 +523,12 @@ namespace Types
 
             public (MoveDirection Direction, int Depth) Traverse(Position[] path, MoveDirection? direction)
             {
+                if (_cancellation.IsCancellationRequested)
+                {
+                    Console.Error.WriteLine("CANCELLING MOVEMENT");
+                    return (direction ?? MoveDirection.Surface, path.Length);
+                }
+                
                 if (direction.HasValue && path.Length > _depth)
                 {
                     return (direction.Value, path.Length);
@@ -485,7 +573,7 @@ namespace Types
                 var best = orderedResults
                     .Where(r => r.Depth == depth).ToArray();
 
-                return best[Random.Next(0, best.Length)];
+                return best[Player.Random.Next(0, best.Length)];
             }
         }
     }
@@ -499,11 +587,16 @@ namespace Types
             _random = random;
         }
         
-        public MoveDirection GetMove(Grid grid, CatBot bot)
+        public MoveDirection GetMove(Grid grid, CatBot bot, CancellationToken cancellation)
         {
             MoveDirection move;
             do
             {
+                if (cancellation.IsCancellationRequested)
+                {
+                    return MoveDirection.Surface;
+                }
+                
                 switch (_random.Next(0, 4))
                 {
                     case 0: 
@@ -542,9 +635,63 @@ namespace Types
         
         public Position Position { get; protected set; }
     }
+    
+    public static class SectorMasks
+    {
+        private static uint[][] _masks;
+
+        static SectorMasks()
+        {
+            Stopwatch timer = new Stopwatch();
+            timer.Start();
+            GenerateSectorMasks();
+            timer.Stop();
+            Console.Error.WriteLine($"Sector masks took {timer.ElapsedMilliseconds}");
+        }
+
+        public static uint[] MaskForSector(Sector sector)
+            => _masks[sector.Number -1];
+        
+        private static void GenerateSectorMasks()
+        {
+            _masks = new uint[9][];
+            for (int i = 0; i < _masks.Length; i++)
+            {
+                int rowGroup = i / 3;
+                uint mask;
+                switch ((i + 1) % 3)
+                {
+                    case 1:
+                        mask = Player.LeftColumnMask;
+                        break;
+                    case 2:
+                        mask = Player.MiddleColumnMask;
+                        break;
+                    case 0:
+                        mask = Player.RightColumnMask;
+                        break;
+                    default:
+                        throw new Exception($"Tried to get a mask for sector {i}");
+                }
+                
+                _masks[i] = new uint[15]; // Assuming the grid size is always 15...
+                for (int row = 0; row < _masks[i].Length; row++)
+                {
+                    if (row >= rowGroup * 5 && row < rowGroup * 5 + 5)
+                    {
+                        _masks[i][row] = (mask & uint.MaxValue) | Player.UnusedBitsMask;
+                        continue;
+                    }
+                    
+                    _masks[i][row] = uint.MaxValue;
+                }
+            }
+        }
+    }
 
     public class Grid
     {
+        private readonly uint _unusedBitsMask;
         public uint[] GridBinary { get; }
         public int Width { get; }
         public int Height { get; }
@@ -560,13 +707,14 @@ namespace Types
             string gridString = string.Join("\n", GridBinary.Select(g => Convert.ToString(g, 2)));
             Width = input[0].Length;
             Height = input.Length;
+            _unusedBitsMask = ~(uint) Enumerable.Range(0, Width).Sum(i => (uint) Math.Pow(2, i));
             
             MaskUnusedBits(GridBinary);
         }
-        
+
         private void MaskUnusedBits(uint[] grid)
         {
-            uint mask = ~(uint) Enumerable.Range(0, Width).Sum(i => (uint) Math.Pow(2, i));
+            uint mask = _unusedBitsMask;
 
             for (int i = 0; i < GridBinary.Length; i++)
             {
@@ -655,14 +803,13 @@ namespace Types
         
     public class StartLocator
     {
-        private static readonly Random _random = new Random();
         public Position FindLocation(Grid grid)
         {
             Position start;
             GridContent startContent;
             do
             {
-                start = new Position(_random.Next(0, grid.Width), _random.Next(0, grid.Height));
+                start = new Position(Player.Random.Next(0, grid.Width), Player.Random.Next(0, grid.Height));
                 startContent = grid.ContentsAt(start);
             } while (startContent != GridContent.Empty);
 
@@ -723,7 +870,10 @@ namespace Types
         
         public Position? GetTarget(Position myLocation, IEnumerable<Position> locations)
         {
-            var inRange = locations.Where(l => _grid.DistanceBetween(myLocation, l) <= 4).ToList();
+            var inRange = locations.Where(l => 
+                _grid.DistanceBetween(myLocation, l) <= 4
+                && (Math.Abs(l.X - myLocation.X) > 2 || Math.Abs(l.Y - myLocation.Y) > 2) 
+                ).ToList();
             if (!inRange.Any() || inRange.Count > 5)
             {
                 return null;
@@ -801,53 +951,27 @@ namespace Types
             return result;
         }
     }
-    
-    public class GridBitRotator
-    {
-        private readonly uint _leftMostBitInt;
 
-        public GridBitRotator(in int bitCount)
-        {
-            _leftMostBitInt = (uint)Math.Pow(2, bitCount - 1);
-        }
-
-        public uint[] Rotate(uint[] ints)
-        {
-            uint[] result = new uint[ints.Length];
-            for (int i = 0; i < ints.Length; i++)
-            {
-                int leftIndex = i == 0 ? ints.Length - 1 : i - 1;
-                uint incomingIfRequired = (ints[leftIndex] & 1) * _leftMostBitInt;
-                result[i] = (ints[i] >> 1) | incomingIfRequired;
-            }
-
-            return result;
-        }
-    }
-    
     public struct EnemyMove
     {
-        private static readonly Regex _moveRegex = new Regex("MOVE (?<move>[NSEW])", RegexOptions.Compiled);
-        private static readonly Regex SectorRegex = new Regex(@"(SONAR|SURFACE) (?<sector>\d)", RegexOptions.Compiled);
-        private static readonly Regex SilenceRegex = new Regex(@"SILENCE", RegexOptions.Compiled);
         private readonly Direction? _direction;
         private readonly Sector? _sector;
         
         public EnemyMove(string input)
         {
-            var move = _moveRegex.Match(input);
+            var move = Player.MoveRegex.Match(input);
             _direction = move.Success ? (Direction?)move.Groups["move"].Value[0] : null;
 
-            var sector = SectorRegex.Match(input);
+            var sector = Player.SectorRegex.Match(input);
             _sector = sector.Success ? (Sector?) new Sector(int.Parse(sector.Groups["sector"].Value)) : null;
 
-            IsSilence = SilenceRegex.IsMatch(input);
+            IsSilence = Player.SilenceRegex.IsMatch(input);
         }
     
         public bool IsMovement => _direction.HasValue;
         public Direction Movement => _direction.Value;
         public bool HasSector => _sector.HasValue;
-        public Sector Sector => _sector.Value;
+        public Sector? Sector => _sector;
         public bool IsSilence { get; }
     }
 
