@@ -58,14 +58,12 @@ namespace Types
             var locatorStrategy = new BasicEnemyLocatorStrategy(grid);
             List<EnemyMove> enemyMoves = new List<EnemyMove>();
             // game loop
-            int turnNumber = 0;
             while (true)
             {
                 Stopwatch globalTimer = new Stopwatch();
 
                 try
                 {
-                    turnNumber++;
                     inputs = Console.ReadLine().Split(' ');
                     globalTimer.Start();
                     int x = int.Parse(inputs[0]);
@@ -115,22 +113,41 @@ namespace Types
                     CancellationTokenSource cancellation = new CancellationTokenSource(5);
                     Console.Error.WriteLine($"Starting movement at {globalTimer.ElapsedMilliseconds}");
                     var move = moveStrategy.GetMove(grid, catBot, cancellation.Token);
+                    List<string> orders = new List<string>();
+                    if (silenceCooldown == 0 && move != MoveDirection.Surface)
+                    {
+                        orders.Add(move.ToSilence());
+                        catBot.Move(grid, move);
+                        move = moveStrategy.GetMove(grid, catBot, cancellation.Token);
+                    }
                     Console.Error.WriteLine($"Finishing movement at {globalTimer.ElapsedMilliseconds}");
                     catBot.Move(grid, move);
-                    string torpedo;
-                    if (turnNumber % 4 != 0)
+                    string moveString = move.ToMove();
+                    Console.Error.WriteLine($"TORP {torpedoCooldown}");
+                    if (torpedoCooldown > 0)
                     {
-                        torpedo = " TORPEDO";
+                        moveString = $"{moveString} TORPEDO";
                     }
                     else
                     {
-                        var target = knownLocationTargettingStrategy.GetTarget(catBot.Position, enemyLocations) ??
-                                     torpedoStrategy.GetTarget();
-                        torpedo = $"|TORPEDO {target.X} {target.Y}";
+                        var target = knownLocationTargettingStrategy.GetTarget(catBot.Position, enemyLocations);
+                        if (target != null)
+                        {
+                            orders.Add($"TORPEDO {target.Value.X} {target.Value.Y}");
+                        }
+                        else if (silenceCooldown > 0)
+                        {
+                            moveString = $"{moveString} SILENCE";
+                        }
+
+                        // var target = knownLocationTargettingStrategy.GetTarget(catBot.Position, enemyLocations) ??
+                        //              torpedoStrategy.GetTarget();
+                        // torpedo = $"|TORPEDO {target.X} {target.Y}";
                     }
 
                     // Console.Error.WriteLine($"Torpedo is {torpedo}");
-                    Console.WriteLine($"{move.ToMove()}{torpedo}");
+                    orders.Add(moveString);
+                    Console.WriteLine(string.Join("|", orders));
                 }
                 finally
                 {
@@ -152,6 +169,9 @@ namespace Types
                     return $"MOVE {(char)direction}";
             }
         }
+
+        public static string ToSilence(this MoveDirection direction, int distance = 1)
+            => $"SILENCE {(char) direction} {distance}";
 
         public static MoveDirection ToMove(this Direction direction)
         {
