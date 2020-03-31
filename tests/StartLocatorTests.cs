@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Types;
 using Xunit;
 
@@ -23,6 +24,8 @@ namespace tests
             
             // And a start locator
             StartLocator startLocator = new StartLocator();
+
+            string gridString = string.Join("\n", grid.GridBinary.Select(g => Convert.ToString(g, 2))); 
             
             // When I request a start location
             Position start = startLocator.FindLocation(grid);

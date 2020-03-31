@@ -15,6 +15,7 @@ namespace Types
     {
         private static Regex _moveRegex = new Regex("MOVE (?<move>[NSEW])", RegexOptions.Compiled);
         private static Regex _silenceRegex = new Regex(@"SILENCE", RegexOptions.Compiled);
+        private static Regex _sectorLocator = new Regex(@"(SONAR|SURFACE) (?<sector>\d+)");
 
         static void Main(string[] args)
         {
@@ -49,7 +50,7 @@ namespace Types
             var torpedoStrategy = new TorpedoStrategy(random, grid, catBot);
             var knownLocationTargettingStrategy = new KnownLocationsTorpedoStrategy(grid, random);
             var locatorStrategy = new BasicEnemyLocatorStrategy(grid);
-            List<Direction> enemyMoves = new List<Direction>();
+            List<EnemyMove> enemyMoves = new List<EnemyMove>();
             // game loop
             int turnNumber = 0;
             while (true)
@@ -67,18 +68,21 @@ namespace Types
                 string sonarResult = Console.ReadLine();
                 string opponentOrders = Console.ReadLine();
 
-                if (_silenceRegex.IsMatch(opponentOrders))
+                var currentMove = new EnemyMove(opponentOrders);
+                enemyMoves.Add(currentMove);
+                
+                if (currentMove.IsSilence)
                 {
                     Console.Error.WriteLine($"SILENCED {opponentOrders}");
                     enemyMoves.Clear();
                 }
                 
-                var moveMatch = _moveRegex.Match(opponentOrders);
-                if (moveMatch.Success)
+                Console.Error.WriteLine($"Spotted moves: {string.Join(" ", enemyMoves.Where(m => m.IsMovement).Select(e => (char)e.Movement))}");
+
+                if (currentMove.HasSector)
                 {
-                    enemyMoves.Add((Direction)moveMatch.Groups["move"].Value[0]);
+                    Console.Error.WriteLine($"Enemy in sector {currentMove.Sector}");
                 }
-                Console.Error.WriteLine($"Spotted moves: {string.Join(" ", enemyMoves.Select(e => (char)e))}");
 
                 // Write an action using Console.WriteLine()
                 // To debug: Console.Error.WriteLine("Debug messages...");s
@@ -198,6 +202,93 @@ namespace Types
         }
     }
 
+    public class OverlayGrid
+    {
+        private readonly uint[] _overlayGrid;
+        private readonly uint[] _offsetGrid;
+        public Position CurrentOffset { get; private set; }
+        public bool CanMoveDown => (_offsetGrid[_offsetGrid.Length - 1] & ~(uint) 0) == 0;
+        public bool CanMoveRight => _offsetGrid.All(row => (row & 1) == 0);
+
+        public OverlayGrid(int width, int height, List<Position> positions)
+        {
+            _overlayGrid = GenerateGridBinary(width, height, positions);
+            _offsetGrid = new uint[_overlayGrid.Length];
+            _overlayGrid.CopyTo(_offsetGrid, 0);
+            CurrentOffset = new Position(0,0);
+        }
+
+        private uint[] GenerateGridBinary(int width, int height, List<Position> positions)
+        {
+            uint[] myGrid = new uint[height];
+            foreach (var position in positions)
+            {
+                try
+                {
+                    myGrid[position.Y] = myGrid[position.Y] | (uint) Math.Pow(2, width - 1 - position.X);
+                }
+                catch (Exception)
+                {   
+                    Console.Error.WriteLine($"Tried to access position index {position.Y} but only have {height} rows");
+                    foreach (var p in positions)
+                    {
+                        Console.Error.WriteLine($"{p}");
+                    }
+                    throw;
+                }
+            }
+            var grid = string.Join("\n", myGrid.Select(g => Convert.ToString(g, 2)));
+            return myGrid;
+        }
+
+        public uint[] Mask(Grid grid)
+        {
+            if (grid.GridBinary.Length != _offsetGrid.Length)
+            {
+                throw new Exception("Grids are of different sizes");
+            }
+            
+            uint[] masked = new uint[_offsetGrid.Length];
+            for (int i=0;i<_offsetGrid.Length;i++)
+            {
+                masked[i] = grid.GridBinary[i] & _offsetGrid[i];
+            }
+
+            return masked;
+        }
+        
+        public void ShiftRight()
+        {
+            CurrentOffset = new Position(CurrentOffset.X + 1, CurrentOffset.Y);
+            for (int i = 0; i < _offsetGrid.Length; i++)
+            {
+                _offsetGrid[i] = _offsetGrid[i] >> 1;
+            }
+        }
+
+        public void ShiftToOriginalX()
+        {
+            int offset = CurrentOffset.X;
+            CurrentOffset = new Position(0, CurrentOffset.Y);
+            for (int i = 0; i < _offsetGrid.Length; i++)
+            {
+                _offsetGrid[i] = _offsetGrid[i] << offset;
+            }
+        }
+        
+        public void ShiftDown()
+        {
+            CurrentOffset = new Position(CurrentOffset.X, CurrentOffset.Y + 1);
+            uint temp = _offsetGrid[_offsetGrid.Length - 1];
+            for (int i = _offsetGrid.Length - 1; i > 0; i--)
+            {
+                _offsetGrid[i] = _offsetGrid[i - 1];
+            }
+
+            _offsetGrid[0] = temp;
+        }
+    }
+
     public class BasicEnemyLocatorStrategy
     {
         private readonly Grid _grid;
@@ -234,113 +325,45 @@ namespace Types
 
             return (northCount, southCount, eastCount, westCount);
         }
-        
-        public IEnumerable<Position> LocateEnemy(IEnumerable<Direction> moves)
+
+        public IEnumerable<Position> LocateEnemy(IEnumerable<EnemyMove> moves)
         {
-            var positions = FindPositions(moves);
-            var myGrid = GenerateMyGrid(positions);
-
-            uint[] gridShape = new uint[_grid.GridBinary.Length];
-            _grid.GridBinary.CopyTo(gridShape, 0);
-
-            MaskUnusedBits(gridShape);
+            var directions = moves
+                .Where(m => m.IsMovement)
+                .Select(m => m.Movement);
+            var positions = FindPositions(directions);
+            var search = new OverlayGrid(_grid.Width, _grid.Height, positions);
 
             List<Position> offsetMatches = new List<Position>();
 
-            Position offset = new Position(0,0);
-            uint[] search = new uint[myGrid.Length];
-            myGrid.CopyTo(search, 0);
             do
             {
-                bool fail = false;
-                for (int row = 0; row < gridShape.Length; row++)
+                var mask = search.Mask(_grid);
+
+                if (mask.All(m => m == 0))
                 {
-                    if ((gridShape[row] & search[row]) != 0)
-                    {
-                        fail = true;
-                        break;
-                    }
-                }
-                
-                if (!fail)
-                {
-                    offsetMatches.Add(offset);
+                    offsetMatches.Add(search.CurrentOffset);
                     // Console.Error.WriteLine($"Found a place the enemy could be hiding offset {offset}");
                 }
                 
-                if (search.Any(row => (row & 1) != 0) && (search[search.Length - 1] & ~(uint) 0) != 0)
+                if (!search.CanMoveRight && !search.CanMoveDown)
                 {
                     break;
                 }
 
-                if (search.All(row => (row & 1) == 0))
+                if (search.CanMoveRight)
                 {
-                    ShiftShapeRight(search);
-                    offset = new Position(offset.X + 1, offset.Y);
+                    search.ShiftRight();
                     continue;
                 }
 
-                
-                ShiftShapeDown(myGrid, search);
-                offset = new Position(0, offset.Y + 1);
+                search.ShiftToOriginalX();
+                search.ShiftDown();
 
             } while (true);
 
             Position lastPosition = positions[positions.Count - 1];
             return offsetMatches.Select(m => new Position(m.X + lastPosition.X, m.Y + lastPosition.Y));
-        }
-
-        private static void ShiftShapeDown(uint[] myGrid, uint[] search)
-        {
-            uint temp = myGrid[myGrid.Length - 1];
-            for (int i = myGrid.Length - 1; i > 0; i--)
-            {
-                myGrid[i] = myGrid[i - 1];
-            }
-
-            myGrid[0] = temp;
-            myGrid.CopyTo(search, 0);
-        }
-
-        private static void ShiftShapeRight(uint[] search)
-        {
-            for (int i = 0; i < search.Length; i++)
-            {
-                search[i] = search[i] >> 1;
-            }
-        }
-
-        private void MaskUnusedBits(uint[] gridShape)
-        {
-            uint mask = ~(uint) Enumerable.Range(0, _grid.Width).Sum(i => (uint) Math.Pow(2, i));
-
-            for (int i = 0; i < gridShape.Length; i++)
-            {
-                gridShape[i] = gridShape[i] | mask;
-            }
-        }
-
-        private uint[] GenerateMyGrid(List<Position> positions)
-        {
-            uint[] myGrid = new uint[_grid.GridBinary.Length];
-            foreach (var position in positions)
-            {
-                try
-                {
-                    myGrid[position.Y] = myGrid[position.Y] | (uint) Math.Pow(2, _grid.Width - 1 - position.X);
-                }
-                catch (Exception e)
-                {   
-                    Console.Error.WriteLine($"Tried to access position index {position.Y} but only have {_grid.GridBinary.Length} rows");
-                    foreach (var p in positions)
-                    {
-                        Console.Error.WriteLine($"{p}");
-                    }
-                    throw;
-                }
-            }
-            var grid = string.Join("\n", myGrid.Select(g => Convert.ToString(g, 2)));
-            return myGrid;
         }
 
         private List<Position> FindPositions(IEnumerable<Direction> moves)
@@ -534,13 +557,30 @@ namespace Types
             }
 
             GridBinary = gridInputToBytes.GetInt64(input);
-            
+            string gridString = string.Join("\n", GridBinary.Select(g => Convert.ToString(g, 2)));
             Width = input[0].Length;
             Height = input.Length;
+            
+            MaskUnusedBits(GridBinary);
+        }
+        
+        private void MaskUnusedBits(uint[] grid)
+        {
+            uint mask = ~(uint) Enumerable.Range(0, Width).Sum(i => (uint) Math.Pow(2, i));
+
+            for (int i = 0; i < GridBinary.Length; i++)
+            {
+                grid[i] = grid[i] | mask;
+            }
         }
 
         public GridContent ContentsAt(Position position)
         {
+            if (!IsPositionInBounds(position))
+            {
+                throw new InvalidOperationException("Position is not in bounds");
+            }
+            
             int reversedIndex = Width - 1 - position.X;
             uint mask = (uint) Math.Pow(2, reversedIndex);
 
@@ -783,5 +823,41 @@ namespace Types
 
             return result;
         }
+    }
+    
+    public struct EnemyMove
+    {
+        private static readonly Regex _moveRegex = new Regex("MOVE (?<move>[NSEW])", RegexOptions.Compiled);
+        private static readonly Regex SectorRegex = new Regex(@"(SONAR|SURFACE) (?<sector>\d)", RegexOptions.Compiled);
+        private static readonly Regex SilenceRegex = new Regex(@"SILENCE", RegexOptions.Compiled);
+        private readonly Direction? _direction;
+        private readonly Sector? _sector;
+        
+        public EnemyMove(string input)
+        {
+            var move = _moveRegex.Match(input);
+            _direction = move.Success ? (Direction?)move.Groups["move"].Value[0] : null;
+
+            var sector = SectorRegex.Match(input);
+            _sector = sector.Success ? (Sector?) new Sector(int.Parse(sector.Groups["sector"].Value)) : null;
+
+            IsSilence = SilenceRegex.IsMatch(input);
+        }
+    
+        public bool IsMovement => _direction.HasValue;
+        public Direction Movement => _direction.Value;
+        public bool HasSector => _sector.HasValue;
+        public Sector Sector => _sector.Value;
+        public bool IsSilence { get; }
+    }
+
+    public struct Sector
+    {
+        public Sector(int sector)
+        {
+            Number = sector;
+        }
+        
+        public int Number { get; }
     }
 }

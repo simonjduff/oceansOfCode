@@ -23,18 +23,18 @@ namespace tests
             Grid grid = new Grid(new GridInputToBytes(), input);
             
             // And an enemy move list    
-            var moves = new Direction[]
+            var moves = new string[]
             {
-                Direction.North,
-                Direction.East,
-                Direction.East,
-                Direction.South,
-                Direction.East
+                "MOVE N",
+                "MOVE E",
+                "MOVE E",
+                "MOVE S",
+                "MOVE E"
             };
             
             // When I find the enemy
             var locator = new BasicEnemyLocatorStrategy(grid);
-            IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
+            IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves.Select(m => new EnemyMove(m)));
             
             // Then the location is correct
             Assert.Single(possibleLocations);
@@ -67,51 +67,52 @@ namespace tests
             Grid grid = new Grid(new GridInputToBytes(), input);
             
             // And an enemy move list    
-            var moves = Enumerable.Range(0, 100).SelectMany(i => new[] {Direction.North, Direction.South});
+            var moves = Enumerable.Range(0, 100).SelectMany(i => new[] {
+                new EnemyMove("MOVE N"), 
+                new EnemyMove("MOVE S")});
             
             // When I find the enemy
             var locator = new BasicEnemyLocatorStrategy(grid);
             IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
         }
 
-        [Fact]
-        public void Zero_possibilities_bug()
-        {
-            // Given a grid
-            var input = new string[]
-            {
-                "...............",
-                "...............",
-                "...............",
-                ".........xx...x",
-                ".........xx...x",
-                ".........xxx...",
-                ".......xxxxx...",
-                ".xx....xxxxx...",
-                ".xx....xxxxx...",
-                "...............",
-                "......xx...xxx.",
-                "......xx...xxxx",
-                "...........xxxx",
-                "............xx.",
-                "............xx."
-            };
-            
-            Grid grid = new Grid(new GridInputToBytes(), input);
-
-            var moves = new[]
-            {
-                'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 'N', 
-                'N', 'E', 'E', 'E', 'S', 'W', 'S', 'S', 'E', 'E', 'S', 
-                'W', 'W', 'S', 'E', 'E', 'S', 'E', 'S', 'S', 'N', 'E', 
-                'N', 'N', 'E', 'N', 'W', 'N', 'E', 'E', 'E'
-            }.Select(m => (Direction)m);
-            
-            var locator = new BasicEnemyLocatorStrategy(grid);
-            IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
-            
-            // Then there is more than one possibility
-            Assert.NotEmpty(possibleLocations);
-        }
+        // [Fact]
+        // public void Sector_matching()
+        // {
+        //     // Given a grid
+        //     var input = new string[]
+        //     {
+        //         "...............",
+        //         "...............",
+        //         "...............",
+        //         ".........xx...x",
+        //         ".........xx...x",
+        //         ".........xxx...",
+        //         ".......xxxxx...",
+        //         ".xx....xxxxx...",
+        //         ".xx....xxxxx...",
+        //         "...............",
+        //         "......xx...xxx.",
+        //         "......xx...xxxx",
+        //         "...........xxxx",
+        //         "............xx.",
+        //         "............xx."
+        //     };
+        //     
+        //     Grid grid = new Grid(new GridInputToBytes(), input);
+        //
+        //     var moves = new[]
+        //     {
+        //         "MOVE S", "MOVE S", "SURFACE 3 | MOVE S", "MOVE S",
+        //         "MOVE W","MOVE W", "MOVE W",  
+        //     }.Select(m => new EnemyMove(m));
+        //     
+        //     var locator = new SectorAwareEnemyLocatorStrategy(grid);
+        //     IEnumerable<Position> possibleLocations = locator.LocateEnemy(moves);
+        //     
+        //     // Then there is one possibility
+        //     Assert.Single(possibleLocations);
+        //         Assert.Equal(new Position(11, 4), possibleLocations.Single());
+        // }
     }
 }
